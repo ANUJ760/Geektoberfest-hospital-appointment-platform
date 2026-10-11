@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middlewares/errorHandler');
+const { authRateLimiter } = require('./middlewares/rateLimiter');
 
 const app = express();
 
@@ -11,6 +12,8 @@ app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/health', require('./routes/healthRoutes'));
+app.use('/api/auth/login', authRateLimiter);
+app.use('/api/auth/register', authRateLimiter);
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/doctors', require('./routes/doctorRoutes'));
