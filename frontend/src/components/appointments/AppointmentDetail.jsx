@@ -4,6 +4,7 @@ import * as appointmentApi from '../../api/appointmentApi';
 import useFetch from '../../hooks/useFetch';
 import { doctorName, formatDate, formatTime, getErrorMessage } from '../../utils/format';
 import Alert from '../common/Alert';
+import Modal from '../common/Modal';
 import PageHeader from '../common/PageHeader';
 import Spinner from '../common/Spinner';
 import StatusBadge from '../common/StatusBadge';
@@ -21,6 +22,8 @@ export default function AppointmentDetail({ role }) {
   const navigate = useNavigate();
   const { data: appt, loading, error, reload } = useFetch(() => appointmentApi.getAppointment(id), [id]);
   const [notes, setNotes] = useState(null);
+  const [prescription, setPrescription] = useState('');
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [busy, setBusy] = useState(false);
 
@@ -37,17 +40,37 @@ export default function AppointmentDetail({ role }) {
       await reload();
     } catch (err) {
       setMessage({ type: 'error', text: getErrorMessage(err) });
+      return false;
     } finally {
       setBusy(false);
     }
+    return true;
   };
 
   const cancel = () => {
     if (!window.confirm('Cancel this appointment?')) return;
     run(() => appointmentApi.cancelAppointment(appt._id), 'Appointment cancelled');
   };
-  const setStatus = (status) =>
-    run(() => appointmentApi.updateAppointmentStatus(appt._id, { status, notes: notes ?? appt.notes }), `Appointment marked ${status}`);
+  const setStatus = (status, completionPrescription = prescription) =>
+    run(
+      () => appointmentApi.updateAppointmentStatus(appt._id, {
+        status,
+        notes: notes ?? appt.notes,
+        ...(status === 'completed' && { prescription: completionPrescription }),
+      }),
+      `Appointment marked ${status}`
+    );
+
+  const openCompletionModal = () => {
+    setNotes(appt.notes || '');
+    setPrescription(appt.prescription || '');
+    setShowCompletionModal(true);
+  };
+
+  const completeAppointment = async (event) => {
+    event.preventDefault();
+    if (await setStatus('completed', prescription)) setShowCompletionModal(false);
+  };
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -67,21 +90,16 @@ export default function AppointmentDetail({ role }) {
           <Row label="Patient">{appt.patient?.name} · {appt.patient?.email}</Row>
           <Row label="Reason">{appt.reason || '-'}</Row>
           <Row label="Doctor notes">{appt.notes || '-'}</Row>
+          <Row label="Prescription">{appt.prescription || '-'}</Row>
           {appt.status === 'cancelled' && <Row label="Cancelled by">{appt.cancelledBy || '-'}</Row>}
         </dl>
 
         <div className="mt-4 space-y-3">
           <Alert type={message.type || 'info'}>{message.text}</Alert>
-          {role === 'doctor' && appt.status === 'booked' && (
-            <div>
-              <label htmlFor="notes" className="label">Notes</label>
-              <textarea id="notes" rows={3} maxLength={1000} className="input" value={notes ?? appt.notes} onChange={(e) => setNotes(e.target.value)} />
-            </div>
-          )}
           {appt.status === 'booked' && (
             <div className="flex flex-wrap gap-2">
               {role === 'doctor' && (
-                <button type="button" id="mark-completed" className="btn-primary" disabled={busy} onClick={() => setStatus('completed')}>Mark completed</button>
+                <button type="button" id="mark-completed" className="btn-primary" disabled={busy} onClick={openCompletionModal}>Mark completed</button>
               )}
               <button type="button" id="cancel-appointment" className="btn-danger" disabled={busy} onClick={cancel}>Cancel appointment</button>
             </div>
@@ -91,6 +109,43 @@ export default function AppointmentDetail({ role }) {
           )}
         </div>
       </div>
+      {showCompletionModal && (
+        <Modal title="Complete appointment" onClose={() => setShowCompletionModal(false)}>
+          <form onSubmit={completeAppointment} className="space-y-3" noValidate>
+            <p className="text-sm text-slate-600">Add the diagnosis notes and prescription before completing this appointment.</p>
+            <div>
+              <label htmlFor="completion-notes" className="label">Diagnosis notes</label>
+              <textarea
+                id="completion-notes"
+                rows={4}
+                maxLength={1000}
+                className="input"
+                value={notes ?? ''}
+                onChange={(e) => setNotes(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="prescription" className="label">Prescription</label>
+              <textarea
+                id="prescription"
+                rows={4}
+                maxLength={2000}
+                className="input"
+                value={prescription}
+                onChange={(e) => setPrescription(e.target.value)}
+                placeholder="Enter medicines and instructions"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setShowCompletionModal(false)}>Cancel</button>
+              <button type="submit" id="confirm-completion" className="btn-primary" disabled={busy}>
+                {busy ? 'Completing...' : 'Complete appointment'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
