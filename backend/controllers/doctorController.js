@@ -4,11 +4,20 @@ const Department = require('../models/Department');
 const Appointment = require('../models/Appointment');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
 const { isValidEmail, isValidObjectId, isValidDate, escapeRegex, pick } = require('../utils/validators');
+const { getCache, setCache, clearCache } = require('../config/redis');
 
 const doctorPopulate = [
   { path: 'user', select: 'name email phone isActive' },
   { path: 'department', select: 'name' },
 ];
+
+const buildDoctorCacheKey = (query, role) => {
+  const keys = Object.keys(query || {}).sort();
+  const serializedQuery = keys
+    .map((k) => `${k}=${encodeURIComponent(query[k] ?? '')}`)
+    .join('&');
+  return `doctors:role=${role}:${serializedQuery}`;
+};
 
 const PROFILE_FIELDS = ['specialization', 'qualification', 'experience', 'consultationFee', 'bio'];
 
@@ -61,6 +70,13 @@ const createDoctorAccount = async (body) => {
 
 // GET /api/doctors?department=&specialization=&search=
 const listDoctors = asyncHandler(async (req, res) => {
+  const role = req.user?.role || 'public';
+  const cacheKey = buildDoctorCacheKey(req.query, role);
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.status(200).json(cached);
+  }
+
   const { department, specialization, search } = req.query;
   const filter = {};
   if (req.user.role !== 'admin' || req.query.includeInactive !== 'true') filter.isActive = true;
@@ -76,7 +92,9 @@ const listDoctors = asyncHandler(async (req, res) => {
   }
 
   const doctors = await Doctor.find(filter).populate(doctorPopulate).sort({ createdAt: -1 });
-  res.status(200).json({ success: true, message: 'Doctors retrieved', data: doctors });
+  const payload = { success: true, message: 'Doctors retrieved', data: doctors };
+  await setCache(cacheKey, payload);
+  res.status(200).json(payload);
 });
 
 // GET /api/doctors/:id
@@ -90,6 +108,7 @@ const getDoctor = asyncHandler(async (req, res) => {
 // POST /api/doctors  (admin)
 const createDoctor = asyncHandler(async (req, res) => {
   const { doctor } = await createDoctorAccount(req.body);
+  await clearCache('doctors:*');
   res.status(201).json({ success: true, message: 'Doctor created', data: doctor });
 });
 
@@ -132,6 +151,7 @@ const updateMyProfile = asyncHandler(async (req, res) => {
   const doctor = await Doctor.findOne({ user: req.user._id });
   if (!doctor) throw new HttpError(404, 'Doctor profile not found');
   const updated = await applyProfileUpdate(doctor, req.body, { allowAdminFields: false });
+  await clearCache('doctors:*');
   res.status(200).json({ success: true, message: 'Profile updated', data: updated });
 });
 
@@ -141,6 +161,7 @@ const updateDoctor = asyncHandler(async (req, res) => {
   const doctor = await Doctor.findById(req.params.id);
   if (!doctor) throw new HttpError(404, 'Doctor not found');
   const updated = await applyProfileUpdate(doctor, req.body, { allowAdminFields: true });
+  await clearCache('doctors:*');
   res.status(200).json({ success: true, message: 'Doctor updated', data: updated });
 });
 
@@ -152,6 +173,7 @@ const deactivateDoctor = asyncHandler(async (req, res) => {
   doctor.isActive = false;
   await doctor.save();
   await User.updateOne({ _id: doctor.user }, { isActive: false });
+  await clearCache('doctors:*');
   res.status(200).json({ success: true, message: 'Doctor deactivated', data: await doctor.populate(doctorPopulate) });
 });
 
