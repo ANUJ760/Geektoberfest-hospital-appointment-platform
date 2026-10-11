@@ -21,6 +21,7 @@ export default function AppointmentDetail({ role }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: appt, loading, error, reload } = useFetch(() => appointmentApi.getAppointment(id), [id]);
+  const [reason, setReason] = useState('');
   const [notes, setNotes] = useState(null);
   const [prescription, setPrescription] = useState('');
   const [showCompletionModal, setShowCompletionModal] = useState(false);
@@ -55,6 +56,7 @@ export default function AppointmentDetail({ role }) {
     run(
       () => appointmentApi.updateAppointmentStatus(appt._id, {
         status,
+        reason,
         notes: notes ?? appt.notes,
         ...(status === 'completed' && { prescription: completionPrescription }),
       }),
@@ -62,6 +64,7 @@ export default function AppointmentDetail({ role }) {
     );
 
   const openCompletionModal = () => {
+    setReason(appt.reason || '');
     setNotes(appt.notes || '');
     setPrescription(appt.prescription || '');
     setShowCompletionModal(true);
@@ -113,6 +116,18 @@ export default function AppointmentDetail({ role }) {
         <Modal title="Complete appointment" onClose={() => setShowCompletionModal(false)}>
           <form onSubmit={completeAppointment} className="space-y-3" noValidate>
             <p className="text-sm text-slate-600">Add the diagnosis notes and prescription before completing this appointment.</p>
+            <div>
+              <label htmlFor="completion-reason" className="label">Reason for visit</label>
+              <textarea
+                id="completion-reason"
+                rows={3}
+                maxLength={500}
+                className="input"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                required
+              />
+            </div>
             <div>
               <label htmlFor="completion-notes" className="label">Diagnosis notes</label>
               <textarea

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import * as appointmentApi from '../../api/appointmentApi';
 import * as doctorApi from '../../api/doctorApi';
 import AppointmentList from '../../components/appointments/AppointmentList';
@@ -60,7 +61,7 @@ export default function Appointments() {
           renderActions={(a) =>
             a.status === 'booked' && (
               <>
-                <button type="button" className="btn-primary btn-sm" onClick={() => update(a, 'completed')}>Complete</button>
+                <Link className="btn-primary btn-sm" to={`/doctor/appointments/${a._id}`}>Complete</Link>
                 <button type="button" className="btn-danger btn-sm" onClick={() => update(a, 'cancelled')}>Cancel</button>
               </>
             )
