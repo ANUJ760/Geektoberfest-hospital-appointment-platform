@@ -23,6 +23,7 @@ const NAV = {
     ['/admin/departments', 'Departments'],
     ['/admin/appointments', 'Appointments'],
     ['/admin/waiting-list', 'Waiting Lists'],
+    ['/admin/analytics', 'Analytics'],
   ],
 };
 
