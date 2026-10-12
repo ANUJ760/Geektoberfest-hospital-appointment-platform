@@ -5,7 +5,8 @@ import Alert from '../../components/common/Alert';
 import PageHeader from '../../components/common/PageHeader';
 import Spinner from '../../components/common/Spinner';
 import useFetch from '../../hooks/useFetch';
-import { getErrorMessage } from '../../utils/format';
+import { generateCSV, downloadCSV } from '../../utils/csv';
+import { getErrorMessage, todayString } from '../../utils/format';
 
 export default function Appointments() {
   const [status, setStatus] = useState('');
@@ -25,9 +26,46 @@ export default function Appointments() {
     }
   };
 
+  const handleExportCSV = () => {
+    if (!data || !data.length) return;
+    const headers = [
+      { label: 'Appointment ID', key: '_id' },
+      { label: 'Date', key: 'date' },
+      { label: 'Start Time', key: 'startTime' },
+      { label: 'End Time', key: 'endTime' },
+      { label: 'Status', key: 'status' },
+      { label: 'Doctor Name', key: (a) => a.doctor?.user?.name || '' },
+      { label: 'Specialization', key: (a) => a.doctor?.specialization || '' },
+      { label: 'Department', key: (a) => a.doctor?.department?.name || '' },
+      { label: 'Patient Name', key: (a) => a.patient?.name || '' },
+      { label: 'Patient Email', key: (a) => a.patient?.email || '' },
+      { label: 'Patient Phone', key: (a) => a.patient?.phone || '' },
+      { label: 'Reason', key: (a) => a.reason || '' },
+      { label: 'Consultation Notes', key: (a) => a.consultationNotes || '' },
+      { label: 'Prescription', key: (a) => a.prescription || '' },
+      { label: 'Created At', key: (a) => (a.createdAt ? new Date(a.createdAt).toISOString() : '') },
+    ];
+    const csv = generateCSV(headers, data);
+    const dateStamp = date || todayString();
+    downloadCSV(`appointments_${dateStamp}.csv`, csv);
+  };
+
   return (
     <div>
-      <PageHeader title="All appointments" />
+      <PageHeader
+        title="All appointments"
+        actions={
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleExportCSV}
+            disabled={!data || data.length === 0}
+            id="export-appointments-csv"
+          >
+            Export to CSV
+          </button>
+        }
+      />
       <div className="card mb-4 grid gap-4 sm:grid-cols-3">
         <div>
           <label htmlFor="a-status" className="label">Status</label>
