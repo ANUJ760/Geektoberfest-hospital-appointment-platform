@@ -114,7 +114,7 @@ hospital-appointment-platform/
 
 ## Deployment
 
-The frontend and backend are deployed separately.
+The frontend and backend are deployed separately as modern decoupled services.
 
 | Component | Platform | Root directory | Build command | Run/publish setting |
 |---|---|---|---|---|
@@ -122,35 +122,72 @@ The frontend and backend are deployed separately.
 | Backend | Render | `backend` | `npm ci` | Start command: `npm start` |
 | Database | MongoDB Atlas | — | — | Connection via `MONGO_URI` |
 
-### Frontend environment variable
+### Frontend Deployment (Vercel)
 
-Set this in Vercel project settings for Production (and Preview only if appropriate):
+1. **Import Repository:** Log in to [Vercel](https://vercel.com/) and click **Add New... > Project**. Import the project repository.
+2. **Configure Project Settings:**
+   - **Framework Preset:** Vite
+   - **Root Directory:** Edit and set to `frontend` (ensure "Include source files outside of the Root Directory" is enabled if necessary).
+   - **Build Command:** `npm run build`
+   - **Output Directory:** `dist`
+   - **Install Command:** `npm ci` or `npm install`
+3. **Environment Variables:**
+   - In **Project Settings > Environment Variables**, add:
+     ```env
+     VITE_API_URL=https://hospital-appointment-platform.onrender.com/api
+     ```
+   - *Note:* Vite statically injects `VITE_` variables during the build. Whenever you change `VITE_API_URL`, you must trigger a redeploy for the changes to take effect.
+4. **Deploy:** Click **Deploy**. Vercel will provision the project and provide your live frontend URL (e.g., `https://hospital-appointment-platform-front.vercel.app`).
 
-```env
-VITE_API_URL=https://hospital-appointment-platform.onrender.com/api
-```
+### Backend Deployment (Render)
 
-Vite embeds `VITE_` variables during the build. Redeploy the frontend after changing this value.
+1. **Create Web Service:** In the [Render Dashboard](https://dashboard.render.com/), click **New + > Web Service** and connect the repository.
+2. **Configure Service Settings:**
+   - **Name:** `hospital-appointment-backend`
+   - **Root Directory:** `backend`
+   - **Runtime:** Node
+   - **Build Command:** `npm ci`
+   - **Start Command:** `npm start`
+   - **Plan:** Free / Starter
+3. **Environment Variables:**
+   - In the **Environment** tab, configure the following variables:
+     ```env
+     NODE_ENV=production
+     MONGO_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/hospital_appointments?retryWrites=true&w=majority
+     JWT_SECRET=<generate_a_long_cryptographically_secure_string>
+     JWT_EXPIRES_IN=7d
+     CLIENT_URL=https://hospital-appointment-platform-front.vercel.app
+     ```
+   - Render automatically provisions and sets the `PORT` environment variable. Do not hardcode `PORT`.
+   - Ensure `CLIENT_URL` matches your exact Vercel frontend URL without trailing slashes. For multiple domains, supply comma-separated values (e.g., `http://localhost:5173,https://hospital-appointment-platform-front.vercel.app`).
 
-### Backend environment variables
+### MongoDB Atlas Setup & Troubleshooting
 
-Set these in the Render backend service's Environment settings:
+#### 1. Cluster & Database User Setup
+1. Create a free-tier M0 cluster in [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
+2. Under **Security > Database Access**, add a database user with `Read and write to any database` permissions. Avoid special characters like `@` or `:` in the password, or URL-encode them.
 
-```env
-NODE_ENV=production
-MONGO_URI=<your MongoDB Atlas connection string>
-JWT_SECRET=<a long, random, unique production secret>
-JWT_EXPIRES_IN=7d
-CLIENT_URL=https://hospital-appointment-platform-front.vercel.app
-```
+#### 2. Network Access (IP Whitelisting)
+By default, MongoDB Atlas rejects incoming connections from unwhitelisted IP addresses.
 
-Render supplies `PORT` automatically. Do not commit `.env` files, database credentials, JWT secrets, or real admin passwords.
+- Navigate to **Security > Network Access**.
+- Click **Add IP Address**.
+- **For Render & Dynamic Cloud Hosts:** Because free/shared cloud platforms (like Render or Vercel serverless functions) utilize dynamically assigned outbound IP addresses, add `0.0.0.0/0` (Allow Access from Anywhere) to permit connections.
+- **For Local Development:** Add your current public IP via "Add Current IP Address".
 
-`CLIENT_URL` must match the deployed frontend origin exactly. The backend configuration can accept multiple comma-separated origins if needed.
+#### 3. Troubleshooting Common Connection Issues
+- **`MongooseServerSelectionError: connect ETIMEDOUT` or `MongoServerSelectionError: connection timed out`**:
+  - The IP address of the server running the backend is blocked by MongoDB Atlas. Verify that `0.0.0.0/0` is active under **Network Access**.
+  - Check whether a corporate firewall or VPN is blocking outbound port `27017`.
+- **`MongoServerError: bad auth : authentication failed`**:
+  - Verify that the username and password in `MONGO_URI` match the database user created under **Database Access** (not your Atlas dashboard login).
+  - URL-encode any special characters in the password (e.g. `@` -> `%40`).
+- **CORS / Preflight Failure in Browser**:
+  - Verify that `CLIENT_URL` in the backend environment matches the exact origin (scheme + domain) of the deployed frontend.
 
-### Health check
+### Health Check
 
-Open [Backend health check](https://hospital-appointment-platform.onrender.com/api/health). A healthy response should contain:
+Open [Backend health check](https://hospital-appointment-platform.onrender.com/api/health). A healthy response returns HTTP 200:
 
 ```json
 {
@@ -163,7 +200,7 @@ Open [Backend health check](https://hospital-appointment-platform.onrender.com/a
 }
 ```
 
-The endpoint may include additional fields such as uptime and timestamp. A `503` response indicates that the database is not connected.
+If the database is unreachable, the endpoint returns HTTP 503 (`database: "disconnected"`).
 
 ## Local Development Setup
 
@@ -273,6 +310,96 @@ The following endpoints are documented by the project:
 | `POST` | `/api/waiting-list` | Patient | Join a waiting list |
 | `GET` | `/api/waiting-list/my` | Patient | View waiting-list entries |
 | `GET` | `/api/users/stats` | Admin | Get system statistics |
+
+### API Curl Request Examples
+
+Below are representative `curl` commands demonstrating requests to the API for key workflows.
+
+#### 1. System Health Check
+```bash
+curl -X GET https://hospital-appointment-platform.onrender.com/api/health \
+  -H "Accept: application/json"
+```
+
+#### 2. Register a Patient
+```bash
+curl -X POST https://hospital-appointment-platform.onrender.com/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "password": "SecurePassword123!",
+    "role": "patient",
+    "phone": "+1-555-0199"
+  }'
+```
+
+#### 3. Log In (Receive JWT)
+```bash
+curl -X POST https://hospital-appointment-platform.onrender.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane.doe@example.com",
+    "password": "SecurePassword123!"
+  }'
+```
+*Save the returned `token` from `data.token` for authenticated requests.*
+
+#### 4. Get Current User Profile
+```bash
+curl -X GET https://hospital-appointment-platform.onrender.com/api/auth/me \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
+```
+
+#### 5. List Departments
+```bash
+curl -X GET https://hospital-appointment-platform.onrender.com/api/departments
+```
+
+#### 6. Search Doctors
+```bash
+# Query doctors by department ID or search term
+curl -X GET "https://hospital-appointment-platform.onrender.com/api/doctors?search=Cardiology" \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
+```
+
+#### 7. Get Computed Slots for a Doctor
+```bash
+curl -X GET "https://hospital-appointment-platform.onrender.com/api/availability/doctor/<DOCTOR_ID>/slots?date=2025-04-15" \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
+```
+
+#### 8. Book an Appointment (Patient)
+```bash
+curl -X POST https://hospital-appointment-platform.onrender.com/api/appointments \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doctorId": "<DOCTOR_ID>",
+    "date": "2025-04-15",
+    "startTime": "10:00",
+    "reason": "Routine cardiac consultation"
+  }'
+```
+
+#### 9. Cancel an Appointment
+```bash
+curl -X PATCH https://hospital-appointment-platform.onrender.com/api/appointments/<APPOINTMENT_ID>/cancel \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>" \
+  -H "Content-Type: application/json"
+```
+
+#### 10. Join Waiting List
+```bash
+curl -X POST https://hospital-appointment-platform.onrender.com/api/waiting-list \
+  -H "Authorization: Bearer <YOUR_JWT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doctorId": "<DOCTOR_ID>",
+    "date": "2025-04-15",
+    "notes": "Available anytime during morning hours"
+  }'
+```
 
 ## Basic Workflow
 
