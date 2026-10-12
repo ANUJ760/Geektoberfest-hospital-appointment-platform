@@ -1,8 +1,10 @@
 import { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import useAuth from '../hooks/useAuth';
 import { TOKEN_KEY, normalizeApiUrl } from '../api/axios';
+import { formatWaitingListNotification } from '../utils/notification.js';
 
 export const NotificationContext = createContext(null);
+export { formatWaitingListNotification };
 
 export function NotificationProvider({ children }) {
   const { user, isAuthenticated } = useAuth();
@@ -45,24 +47,26 @@ export function NotificationProvider({ children }) {
     try {
       eventSource = new EventSource(sseUrl);
 
-      eventSource.addEventListener('connected', () => {
-        // Connected to SSE notification stream
+      eventSource.addEventListener('connected', (e) => {
+        try {
+          const handshake = JSON.parse(e.data);
+          if (Array.isArray(handshake.recent) && handshake.recent.length > 0) {
+            const formattedList = handshake.recent.map(formatWaitingListNotification);
+            setNotifications((prev) => {
+              const existingIds = new Set(prev.map((p) => p.id));
+              const newItems = formattedList.filter((item) => !existingIds.has(item.id));
+              return [...newItems, ...prev];
+            });
+          }
+        } catch (err) {
+          // Handshake payload parse failure ignored
+        }
       });
 
       eventSource.addEventListener('waiting_list_assigned', (e) => {
         try {
           const payload = JSON.parse(e.data);
-          const notificationItem = {
-            id: payload.appointmentId || String(Date.now()),
-            type: 'waiting_list_assigned',
-            title: 'Waiting List Slot Assigned!',
-            message:
-              payload.message ||
-              `An appointment slot on ${payload.date} at ${payload.startTime} has been assigned to you!`,
-            data: payload,
-            createdAt: new Date().toISOString(),
-            read: false,
-          };
+          const notificationItem = formatWaitingListNotification(payload);
           setNotifications((prev) => [notificationItem, ...prev]);
           setActiveBanner(notificationItem);
         } catch (err) {

@@ -14,13 +14,16 @@ const Doctor = require('../models/Doctor');
 const WaitingList = require('../models/WaitingList');
 const User = require('../models/User');
 
-test('notificationService.subscribe sets headers, sends handshake, and manages active client count', (t) => {
+test('notificationService.subscribe sets headers, sends handshake with recent history, and tracks clients', (t) => {
   notificationService.reset();
 
   const mockUserId = '507f1f77bcf86cd799439011';
   let closedCallback = null;
   const writtenChunks = [];
   const headersSet = {};
+
+  // Pre-populate a recent notification
+  notificationService.notifyPatient(mockUserId, { appointmentId: 'old_123', message: 'Earlier note' });
 
   const req = {
     user: { _id: mockUserId },
@@ -36,6 +39,7 @@ test('notificationService.subscribe sets headers, sends handshake, and manages a
     write(chunk) {
       writtenChunks.push(chunk);
     },
+    on() {},
     flushHeaders() {},
   };
 
@@ -47,10 +51,11 @@ test('notificationService.subscribe sets headers, sends handshake, and manages a
   assert.equal(notificationService.getSubscriberCount(mockUserId), 1);
   assert.equal(notificationService.getSubscriberCount(), 1);
 
-  // Initial handshake event
+  // Initial handshake event includes recent history
   assert.ok(writtenChunks.length >= 1);
   assert.match(writtenChunks[0], /event: connected/);
   assert.match(writtenChunks[0], /"status":"connected"/);
+  assert.match(writtenChunks[0], /"appointmentId":"old_123"/);
 
   // Trigger client disconnect
   assert.ok(typeof closedCallback === 'function');
@@ -59,44 +64,95 @@ test('notificationService.subscribe sets headers, sends handshake, and manages a
   assert.equal(notificationService.getSubscriberCount(), 0);
 });
 
-test('notificationService.notifyPatient broadcasts SSE payload to connected recipient', () => {
-  notificationService.reset();
+test('notificationService.subscribe rejects unauthenticated requests', () => {
+  let statusSet = 200;
+  let jsonSent = null;
 
-  const mockUserId = '507f1f77bcf86cd799439022';
-  const receivedMessages = [];
-
-  const req = {
-    user: { _id: mockUserId },
-    on() {},
-  };
-
+  const req = { user: null };
   const res = {
-    setHeader() {},
-    write(msg) {
-      receivedMessages.push(msg);
+    status(code) {
+      statusSet = code;
+      return res;
     },
+    json(data) {
+      jsonSent = data;
+      return res;
+    },
+    setHeader() {},
   };
 
   notificationService.subscribe(req, res);
+  assert.equal(statusSet, 401);
+  assert.equal(jsonSent.success, false);
+});
 
-  // Sending to offline user returns false
-  const notSent = notificationService.notifyPatient('507f1f77bcf86cd799439099', { test: true });
-  assert.equal(notSent, false);
+test('notificationService.notifyPatient delivers to multiple open tabs for the same user', () => {
+  notificationService.reset();
 
-  // Sending to connected user sends event: waiting_list_assigned
-  const payload = {
-    appointmentId: 'appt_123',
-    date: '2025-05-20',
-    startTime: '11:00',
-    message: 'Slot assigned!',
+  const mockUserId = '507f1f77bcf86cd799439022';
+  const tab1Messages = [];
+  const tab2Messages = [];
+
+  const res1 = {
+    setHeader() {},
+    write: (msg) => tab1Messages.push(msg),
+    on() {},
   };
-  const sent = notificationService.notifyPatient(mockUserId, payload);
-  assert.equal(sent, true);
+  const res2 = {
+    setHeader() {},
+    write: (msg) => tab2Messages.push(msg),
+    on() {},
+  };
 
-  const lastMsg = receivedMessages[receivedMessages.length - 1];
-  assert.match(lastMsg, /event: waiting_list_assigned/);
-  assert.match(lastMsg, /"appointmentId":"appt_123"/);
-  assert.match(lastMsg, /"startTime":"11:00"/);
+  notificationService.subscribe({ user: { _id: mockUserId }, on() {} }, res1);
+  notificationService.subscribe({ user: { _id: mockUserId }, on() {} }, res2);
+
+  assert.equal(notificationService.getSubscriberCount(mockUserId), 2);
+
+  const payload = { appointmentId: 'appt_multi', date: '2025-06-01', startTime: '09:00' };
+  const delivered = notificationService.notifyPatient(mockUserId, payload);
+
+  assert.equal(delivered, true);
+  assert.equal(tab1Messages.length, 2); // 1 handshake + 1 event
+  assert.equal(tab2Messages.length, 2);
+  assert.match(tab1Messages[1], /"appointmentId":"appt_multi"/);
+  assert.match(tab2Messages[1], /"appointmentId":"appt_multi"/);
+});
+
+test('notificationService.notifyPatient gracefully handles socket write errors and prunes dead clients', () => {
+  notificationService.reset();
+
+  const mockUserId = '507f1f77bcf86cd799439033';
+  const healthyMessages = [];
+
+  let handshakeDone = false;
+  const brokenRes = {
+    setHeader() {},
+    write: () => {
+      if (!handshakeDone) {
+        handshakeDone = true;
+        return;
+      }
+      throw new Error('EPIPE: broken pipe');
+    },
+    on() {},
+  };
+  const healthyRes = {
+    setHeader() {},
+    write: (msg) => healthyMessages.push(msg),
+    on() {},
+  };
+
+  notificationService.subscribe({ user: { _id: mockUserId }, on() {} }, brokenRes);
+  notificationService.subscribe({ user: { _id: mockUserId }, on() {} }, healthyRes);
+
+  assert.equal(notificationService.getSubscriberCount(mockUserId), 2);
+
+  const delivered = notificationService.notifyPatient(mockUserId, { appointmentId: 'test_epipe' });
+
+  assert.equal(delivered, true);
+  assert.equal(notificationService.getSubscriberCount(mockUserId), 1);
+  assert.match(healthyMessages[1], /"appointmentId":"test_epipe"/);
 });
 
 test('assignFromWaitingList triggers real-time notification on slot assignment', async (t) => {
@@ -178,7 +234,49 @@ test('assignFromWaitingList triggers real-time notification on slot assignment',
   assert.match(notifiedPayload.message, /assigned to you from the waiting list/i);
 });
 
-test('protect middleware supports token from query param for EventSource connections', async (t) => {
+test('assignFromWaitingList does not notify when slot is in the past or no waiting entry exists', async (t) => {
+  let notifyCalled = false;
+  notificationService.notifyPatient = () => {
+    notifyCalled = true;
+  };
+
+  // Case 1: Past slot
+  const pastAppt = {
+    doctor: '507f1f77bcf86cd799439011',
+    date: '2000-01-01',
+    startTime: '09:00',
+  };
+  const resPast = await assignFromWaitingList(pastAppt);
+  assert.equal(resPast, null);
+  assert.equal(notifyCalled, false);
+
+  // Case 2: No waiting list entries found
+  const origFindSlot = Availability.findSlot;
+  const origWaitingFind = WaitingList.find;
+  const origDoctorFind = Doctor.findById;
+  t.after(() => {
+    Availability.findSlot = origFindSlot;
+    WaitingList.find = origWaitingFind;
+    Doctor.findById = origDoctorFind;
+  });
+
+  Availability.findSlot = async () => ({ slot: { startTime: '10:00', endTime: '10:30' } });
+  WaitingList.find = () => ({
+    sort: () => [], // empty
+  });
+  Doctor.findById = async () => ({ _id: '507f1f77bcf86cd799439011' });
+
+  const futureAppt = {
+    doctor: '507f1f77bcf86cd799439011',
+    date: '2099-10-10',
+    startTime: '10:00',
+  };
+  const resEmpty = await assignFromWaitingList(futureAppt);
+  assert.equal(resEmpty, null);
+  assert.equal(notifyCalled, false);
+});
+
+test('protect middleware supports token from query param and rejects invalid tokens', async (t) => {
   const origFindById = User.findById;
   t.after(() => {
     User.findById = origFindById;
@@ -193,17 +291,33 @@ test('protect middleware supports token from query param for EventSource connect
 
   const validToken = jwt.sign({ id: mockUserId }, process.env.JWT_SECRET);
 
-  const req = {
-    headers: {},
-    query: { token: validToken },
-  };
-
+  // Valid query token
+  const reqValid = { headers: {}, query: { token: validToken } };
   let nextCalled = false;
-  await protect(req, {}, (err) => {
+  await protect(reqValid, {}, (err) => {
     assert.equal(err, undefined);
     nextCalled = true;
   });
-
   assert.equal(nextCalled, true);
-  assert.equal(String(req.user._id), mockUserId);
+  assert.equal(String(reqValid.user._id), mockUserId);
+
+  // Invalid query token
+  const reqInvalid = { headers: {}, query: { token: 'invalid_token_string' } };
+  let invalidErr = null;
+  await protect(reqInvalid, {}, (err) => {
+    invalidErr = err;
+  });
+  assert.ok(invalidErr);
+  assert.equal(invalidErr.status, 401);
+  assert.match(invalidErr.message, /invalid or expired token/i);
+
+  // Missing token
+  const reqMissing = { headers: {}, query: {} };
+  let missingErr = null;
+  await protect(reqMissing, {}, (err) => {
+    missingErr = err;
+  });
+  assert.ok(missingErr);
+  assert.equal(missingErr.status, 401);
+  assert.match(missingErr.message, /token missing/i);
 });
