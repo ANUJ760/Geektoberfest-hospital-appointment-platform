@@ -139,14 +139,20 @@ const cancelAppointment = asyncHandler(async (req, res) => {
   });
 });
 
-// PATCH /api/appointments/:id/status  (doctor own / admin)  body: { status, notes }
+// PATCH /api/appointments/:id/status  (doctor own / admin)  body: { status, reason, notes, prescription }
 const updateAppointmentStatus = asyncHandler(async (req, res) => {
-  const { status, notes } = req.body;
+  const { status, reason, notes, prescription } = req.body;
   if (!['completed', 'cancelled'].includes(status)) {
     throw new HttpError(400, 'Status must be completed or cancelled');
   }
   if (notes !== undefined && (typeof notes !== 'string' || notes.length > 1000)) {
     throw new HttpError(400, 'Notes must be under 1000 characters');
+  }
+  if (reason !== undefined && (typeof reason !== 'string' || reason.length > 500)) {
+    throw new HttpError(400, 'Reason must be under 500 characters');
+  }
+  if (prescription !== undefined && (typeof prescription !== 'string' || prescription.length > 2000)) {
+    throw new HttpError(400, 'Prescription must be under 2000 characters');
   }
   const appointment = await loadAppointment(req.params.id);
   const actor = await getActor(req.user, appointment);
@@ -154,6 +160,8 @@ const updateAppointmentStatus = asyncHandler(async (req, res) => {
     throw new HttpError(403, 'Only the treating doctor or an admin can update the status');
   }
   if (notes !== undefined) appointment.notes = notes;
+  if (reason !== undefined) appointment.reason = reason;
+  if (prescription !== undefined) appointment.prescription = prescription;
 
   let reassigned = null;
   if (status === 'cancelled') {
