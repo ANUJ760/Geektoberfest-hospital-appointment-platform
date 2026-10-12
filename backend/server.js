@@ -40,6 +40,8 @@ const start = async () => {
   }
 };
 
-start();
+if (require.main === module) {
+  start();
+}
 
 module.exports = app;

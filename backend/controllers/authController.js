@@ -34,10 +34,13 @@ const register = asyncHandler(async (req, res) => {
     user = await User.create({ name, email, password, role: 'patient', phone });
   }
 
+  const userJson = user.toJSON ? user.toJSON() : { ...user };
+  delete userJson.password;
+
   res.status(201).json({
     success: true,
     message: 'Registration successful',
-    data: { token: generateToken(user._id), user, doctor },
+    data: { token: generateToken(user._id), user: userJson, doctor },
   });
 });
 
@@ -54,10 +57,13 @@ const login = asyncHandler(async (req, res) => {
   if (!user.isActive) throw new HttpError(403, 'Account is deactivated');
 
   const doctor = user.role === 'doctor' ? await Doctor.findOne({ user: user._id }).populate(doctorPopulate) : null;
+  const userJson = user.toJSON ? user.toJSON() : { ...user };
+  delete userJson.password;
+
   res.status(200).json({
     success: true,
     message: 'Login successful',
-    data: { token: generateToken(user._id), user, doctor },
+    data: { token: generateToken(user._id), user: userJson, doctor },
   });
 });
 
@@ -65,7 +71,10 @@ const login = asyncHandler(async (req, res) => {
 const getMe = asyncHandler(async (req, res) => {
   const doctor =
     req.user.role === 'doctor' ? await Doctor.findOne({ user: req.user._id }).populate(doctorPopulate) : null;
-  res.status(200).json({ success: true, message: 'Current user', data: { user: req.user, doctor } });
+  const userJson = req.user.toJSON ? req.user.toJSON() : { ...req.user };
+  delete userJson.password;
+
+  res.status(200).json({ success: true, message: 'Current user', data: { user: userJson, doctor } });
 });
 
 module.exports = { register, login, getMe };
