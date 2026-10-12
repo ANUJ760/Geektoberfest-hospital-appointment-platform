@@ -29,6 +29,7 @@ import AdminPatients from './pages/admin/Patients';
 import AdminDepartments from './pages/admin/Departments';
 import AdminAppointments from './pages/admin/Appointments';
 import AdminWaitingLists from './pages/admin/WaitingLists';
+import AnalyticsDashboard from './pages/admin/AnalyticsDashboard';
 
 function RootRedirect() {
   const { user, loading } = useAuth();
@@ -75,6 +76,7 @@ export default function App() {
           <Route path="/admin/departments" element={<AdminDepartments />} />
           <Route path="/admin/appointments" element={<AdminAppointments />} />
           <Route path="/admin/waiting-list" element={<AdminWaitingLists />} />
+          <Route path="/admin/analytics" element={<AnalyticsDashboard />} />
         </Route>
       </Route>
 
