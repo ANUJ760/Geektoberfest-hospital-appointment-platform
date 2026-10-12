@@ -4,6 +4,7 @@ const generateToken = require('../utils/generateToken');
 const { isValidEmail } = require('../utils/validators');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
 const { createDoctorAccount } = require('./doctorController');
+const { clearCache } = require('../config/redis');
 
 const doctorPopulate = [
   { path: 'department', select: 'name' },
@@ -28,6 +29,7 @@ const register = asyncHandler(async (req, res) => {
   let doctor = null;
   if (role === 'doctor') {
     ({ user, doctor } = await createDoctorAccount({ ...req.body, name, email, password, phone }));
+    await clearCache('doctors:*');
   } else {
     user = await User.create({ name, email, password, role: 'patient', phone });
   }

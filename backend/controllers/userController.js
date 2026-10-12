@@ -5,6 +5,7 @@ const Appointment = require('../models/Appointment');
 const WaitingList = require('../models/WaitingList');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
 const { isValidObjectId, todayString, escapeRegex, pick } = require('../utils/validators');
+const { clearCache } = require('../config/redis');
 
 // GET /api/users?role=&search=  (admin)
 const listUsers = asyncHandler(async (req, res) => {
@@ -40,8 +41,11 @@ const updateUser = asyncHandler(async (req, res) => {
   }
   Object.assign(user, updates);
   await user.save();
-  if (user.role === 'doctor' && updates.isActive !== undefined) {
-    await Doctor.updateOne({ user: user._id }, { isActive: user.isActive });
+  if (user.role === 'doctor') {
+    if (updates.isActive !== undefined) {
+      await Doctor.updateOne({ user: user._id }, { isActive: user.isActive });
+    }
+    await clearCache('doctors:*');
   }
   res.status(200).json({ success: true, message: 'User updated', data: user });
 });
@@ -54,7 +58,10 @@ const deactivateUser = asyncHandler(async (req, res) => {
   if (!user) throw new HttpError(404, 'User not found');
   user.isActive = false;
   await user.save();
-  if (user.role === 'doctor') await Doctor.updateOne({ user: user._id }, { isActive: false });
+  if (user.role === 'doctor') {
+    await Doctor.updateOne({ user: user._id }, { isActive: false });
+    await clearCache('doctors:*');
+  }
   res.status(200).json({ success: true, message: 'User deactivated', data: user });
 });
 

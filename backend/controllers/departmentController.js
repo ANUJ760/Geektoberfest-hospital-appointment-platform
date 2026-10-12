@@ -1,6 +1,7 @@
 const Department = require('../models/Department');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
 const { isValidObjectId } = require('../utils/validators');
+const { getCache, setCache, clearCache } = require('../config/redis');
 
 const DEFAULT_DEPARTMENTS = [
   { name: 'General Medicine', description: 'Primary care and general health concerns' },
@@ -12,12 +13,20 @@ const DEFAULT_DEPARTMENTS = [
 
 // GET /api/departments  (public, active only)
 const listDepartments = asyncHandler(async (req, res) => {
+  const cacheKey = 'departments:all';
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.status(200).json(cached);
+  }
+
   let departments = await Department.find({ isActive: true }).sort({ name: 1 });
   if (departments.length === 0 && (await Department.countDocuments()) === 0) {
     await Department.insertMany(DEFAULT_DEPARTMENTS, { ordered: false }).catch(() => {});
     departments = await Department.find({ isActive: true }).sort({ name: 1 });
   }
-  res.status(200).json({ success: true, message: 'Departments retrieved', data: departments });
+  const payload = { success: true, message: 'Departments retrieved', data: departments };
+  await setCache(cacheKey, payload);
+  res.status(200).json(payload);
 });
 
 // GET /api/departments/all  (admin, includes inactive)
@@ -41,6 +50,8 @@ const createDepartment = asyncHandler(async (req, res) => {
   const exists = await Department.findOne({ name: new RegExp(`^${String(name).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
   if (exists) throw new HttpError(409, 'Department already exists');
   const department = await Department.create({ name, description });
+  await clearCache('departments:*');
+  await clearCache('doctors:*');
   res.status(201).json({ success: true, message: 'Department created', data: department });
 });
 
@@ -57,6 +68,8 @@ const updateDepartment = asyncHandler(async (req, res) => {
   if (description !== undefined) department.description = description;
   if (isActive !== undefined) department.isActive = Boolean(isActive);
   await department.save();
+  await clearCache('departments:*');
+  await clearCache('doctors:*');
   res.status(200).json({ success: true, message: 'Department updated', data: department });
 });
 
@@ -67,6 +80,8 @@ const deactivateDepartment = asyncHandler(async (req, res) => {
   if (!department) throw new HttpError(404, 'Department not found');
   department.isActive = false;
   await department.save();
+  await clearCache('departments:*');
+  await clearCache('doctors:*');
   res.status(200).json({ success: true, message: 'Department deactivated', data: department });
 });
 
