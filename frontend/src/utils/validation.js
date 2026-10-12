@@ -1,4 +1,4 @@
-import { todayString, nowTimeString } from './format';
+import { todayString, nowTimeString } from './format.js';
 
 export const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v || '').trim());
 
