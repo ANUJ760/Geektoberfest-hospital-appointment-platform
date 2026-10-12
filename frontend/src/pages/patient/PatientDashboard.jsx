@@ -5,7 +5,7 @@ import StatCard from '../../components/admin/StatCard';
 import AppointmentList from '../../components/appointments/AppointmentList';
 import Alert from '../../components/common/Alert';
 import PageHeader from '../../components/common/PageHeader';
-import Spinner from '../../components/common/Spinner';
+import Skeleton, { SkeletonDashboard } from '../../components/common/Skeleton';
 import useAuth from '../../hooks/useAuth';
 import useFetch from '../../hooks/useFetch';
 import { todayString } from '../../utils/format';
@@ -15,7 +15,7 @@ export default function PatientDashboard() {
   const appts = useFetch(() => appointmentApi.getMyAppointments());
   const waiting = useFetch(() => waitingListApi.getMyWaitingList());
 
-  if (appts.loading || waiting.loading) return <Spinner />;
+  if (appts.loading || waiting.loading) return <SkeletonDashboard />;
   const all = appts.data || [];
   const today = todayString();
   const upcoming = all.filter((a) => a.status === 'booked' && a.date >= today).sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
