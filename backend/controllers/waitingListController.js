@@ -2,6 +2,7 @@ const WaitingList = require('../models/WaitingList');
 const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const Doctor = require('../models/Doctor');
+const notificationService = require('../services/notificationService');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
 const { isValidObjectId, isValidDate, isValidTime, todayString, isPastSlot } = require('../utils/validators');
 
@@ -46,6 +47,16 @@ const assignFromWaitingList = async (cancelled) => {
       entry.status = 'assigned';
       entry.appointment = appointment._id;
       await entry.save();
+
+      notificationService.notifyPatient(entry.patient, {
+        appointmentId: appointment._id,
+        doctorId: cancelled.doctor,
+        date: cancelled.date,
+        startTime: cancelled.startTime,
+        endTime: cancelled.endTime,
+        message: `Great news! A slot on ${cancelled.date} at ${cancelled.startTime} has been assigned to you from the waiting list.`,
+      });
+
       return appointment;
     } catch (err) {
       if (err.code === 11000) continue; // slot or patient time already taken, try the next entry
