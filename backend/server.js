@@ -4,11 +4,13 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middlewares/errorHandler');
 const { authRateLimiter } = require('./middlewares/rateLimiter');
+const { parseCookies } = require('./middlewares/authMiddleware');
 
 const app = express();
 
 const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map((s) => s.trim());
-app.use(cors({ origin: allowedOrigins }));
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(parseCookies);
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/health', require('./routes/healthRoutes'));
@@ -40,6 +42,8 @@ const start = async () => {
   }
 };
 
-start();
+if (require.main === module) {
+  start();
+}
 
 module.exports = app;
