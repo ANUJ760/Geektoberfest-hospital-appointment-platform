@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import useAuth from '../../hooks/useAuth';
+import NotificationBanner from './NotificationBanner';
 
 const NAV = {
   patient: [
@@ -83,6 +84,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="flex-1 p-4 md:p-8">
+          <NotificationBanner />
           <Outlet />
         </main>
       </div>

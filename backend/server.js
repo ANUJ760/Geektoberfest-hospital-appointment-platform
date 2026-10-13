@@ -33,6 +33,8 @@ app.use('/api/departments', require('./routes/departmentRoutes'));
 app.use('/api/availability', require('./routes/availabilityRoutes'));
 app.use('/api/appointments', require('./routes/appointmentRoutes'));
 app.use('/api/waiting-list', require('./routes/waitingListRoutes'));
+// SSE stream for waiting-list reassignments (ticket + stream endpoints).
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 app.use(notFound);
 app.use(errorHandler);

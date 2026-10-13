@@ -147,6 +147,8 @@ TRUST_PROXY=1
 
 Access tokens are short lived (15 minutes by default) and bound to a session id. The long-lived credential is a refresh token stored in an HttpOnly cookie, so the frontend origin in `CLIENT_URL` must be allowed for credentialed requests. `JWT_EXPIRES_IN` is no longer used; see [issue-15-changes.md](issue-15-changes.md) for the refresh-token, session-revocation and audit-logging settings (`REFRESH_TOKEN_TTL_DAYS`, `REFRESH_TOKEN_GRACE_MS`, `REFRESH_COOKIE_SAMESITE`, `REFRESH_COOKIE_SECURE`).
 
+The waiting-list notification stream (`SSE_TICKET_TTL_MS`, `SSE_HEARTBEAT_MS`, `SSE_MAX_TICKETS`) and its reverse-proxy requirements are documented in [issue-11-changes.md](issue-11-changes.md). `CLIENT_URL` must contain the frontend origin because the browser's `EventSource` connects cross-origin.
+
 Render supplies `PORT` automatically. Do not commit `.env` files, database credentials, JWT secrets, or real admin passwords.
 
 `CLIENT_URL` must match the deployed frontend origin exactly. The backend configuration can accept multiple comma-separated origins if needed.
@@ -279,6 +281,8 @@ The following endpoints are documented by the project:
 | `GET` | `/api/appointments/my` | Patient | View the patient's appointments |
 | `PATCH` | `/api/appointments/:id/cancel` | Patient/Doctor/Admin | Cancel an appointment and trigger waiting-list handling |
 | `PATCH` | `/api/appointments/:id/status` | Doctor/Admin | Update appointment status |
+| `POST` | `/api/notifications/ticket` | Patient | Issue a short-lived single-use ticket for the notification stream |
+| `GET` | `/api/notifications/stream` | Ticket (query string) | Server-Sent Events stream of waiting-list reassignment notices |
 | `POST` | `/api/waiting-list` | Patient | Join a waiting list |
 | `GET` | `/api/waiting-list/my` | Patient | View waiting-list entries |
 | `GET` | `/api/users/stats` | Admin | Get system statistics |
