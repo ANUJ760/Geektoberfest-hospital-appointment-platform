@@ -222,6 +222,15 @@ npm run dev
 
 The backend defaults to port `5000`.
 
+Run the backend authentication tests:
+
+```bash
+node --test tests/auth.test.js
+```
+
+These tests cover patient and doctor registration, duplicate email rejection
+(`409 Conflict`), and invalid login credentials (`401 Unauthorized`).
+
 ### 3. Set up the frontend
 
 Open a second terminal from the repository root:

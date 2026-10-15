@@ -30,11 +30,16 @@ const register = asyncHandler(async (req, res) => {
 
   let user;
   let doctor = null;
-  if (role === 'doctor') {
-    ({ user, doctor } = await createDoctorAccount({ ...req.body, name, email, password, phone }));
-    await clearCache('doctors:*');
-  } else {
-    user = await User.create({ name, email, password, role: 'patient', phone });
+  try {
+    if (role === 'doctor') {
+      ({ user, doctor } = await createDoctorAccount({ ...req.body, name, email, password, phone }));
+      await clearCache('doctors:*');
+    } else {
+      user = await User.create({ name, email, password, role: 'patient', phone });
+    }
+  } catch (err) {
+    if (err.code === 11000) throw new HttpError(409, 'Email is already registered');
+    throw err;
   }
 
   // Registration signs the user in, so it establishes a session exactly like login does.
