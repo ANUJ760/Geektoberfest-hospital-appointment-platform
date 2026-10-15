@@ -91,34 +91,83 @@ const assertNoOverlap = async (doctorId, windowData, excludeId) => {
     ...(excludeId ? { _id: { $ne: excludeId } } : {}),
   };
 
-  if (!isRecurring) {
-    query.isRecurring = false;
-    query.date = date;
-    const others = await Availability.find(query);
-    if (others.some((o) => s < toMinutes(o.endTime) && toMinutes(o.startTime) < e)) {
-      throw new HttpError(409, 'This window overlaps with an existing availability on the same date');
-    }
-  } else {
-    query.isRecurring = true;
-    query.daysOfWeek = { $in: daysOfWeek };
-    const others = await Availability.find(query);
-    if (others.some((o) => s < toMinutes(o.endTime) && toMinutes(o.startTime) < e)) {
-      throw new HttpError(409, 'This recurring schedule overlaps with an existing recurring availability on the same day');
-    }
+  const others = await Availability.find(query);
+  const proposed = { ...windowData, isRecurring: Boolean(isRecurring) };
+  if (others.some((other) => windowsOverlap(proposed, other))) {
+    throw new HttpError(409, 'This availability overlaps with an existing window');
   }
 };
 
+const dateForDayOffset = (date, offset) => {
+  const [y, m, d] = date.split('-').map(Number);
+  const value = new Date(Date.UTC(y, m - 1, d + offset));
+  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`;
+};
+
+const occursOn = (window, date) => {
+  if (!window.isRecurring) return window.date === date;
+  if (window.startDate && date < window.startDate) return false;
+  if (window.endDate && date > window.endDate) return false;
+  const [y, m, d] = date.split('-').map(Number);
+  return (window.daysOfWeek || []).includes(new Date(Date.UTC(y, m - 1, d)).getUTCDay());
+};
+
+const hasCommonOccurrence = (a, b) => {
+  if (!a.isRecurring && !b.isRecurring) return a.date === b.date;
+  if (!a.isRecurring) return occursOn(b, a.date);
+  if (!b.isRecurring) return occursOn(a, b.date);
+  const first = [a.startDate, b.startDate].filter(Boolean).sort().at(-1) || '1970-01-01';
+  const last = [a.endDate, b.endDate].filter(Boolean).sort()[0] || '9999-12-31';
+  if (first > last) return false;
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = dateForDayOffset(first, offset);
+    if (date > last) break;
+    const [y, m, d] = date.split('-').map(Number);
+    const day = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if ((a.daysOfWeek || []).includes(day) && (b.daysOfWeek || []).includes(day)) return true;
+  }
+  return false;
+};
+
+const windowsOverlap = (a, b) =>
+  hasCommonOccurrence(a, b) &&
+  toMinutes(a.startTime) < toMinutes(b.endTime) &&
+  toMinutes(b.startTime) < toMinutes(a.endTime);
+
 /** Booked appointments sitting in the slots of an availability window. */
-const bookedInWindow = async (availability, targetDate) => {
-  const d = targetDate || availability.date;
-  const starts = availability.getSlots().map((s) => s.startTime);
-  return Appointment.find({
+const bookedInWindow = async (availability) => {
+  const query = {
     doctor: availability.doctor,
-    date: d,
     status: { $in: Appointment.ACTIVE_STATUSES },
-    startTime: { $in: starts },
+  };
+  if (!availability.isRecurring) query.date = availability.date;
+  else {
+    if (availability.startDate || availability.endDate) {
+      query.date = {};
+      if (availability.startDate) query.date.$gte = availability.startDate;
+      if (availability.endDate) query.date.$lte = availability.endDate;
+    }
+  }
+  const appointments = await Appointment.find(query);
+  return appointments.filter((appointment) => {
+    const date = appointment.date;
+    if (!occursOn(availability, date)) return false;
+    return availability.getSlots().some((slot) => slot.startTime === appointment.startTime);
   });
 };
+
+const slotsForWindow = (window) => {
+  const breaks = (window.breaks || []).map((b) => ({ start: toMinutes(b.startTime), end: toMinutes(b.endTime) }));
+  return generateSlots(window.startTime, window.endTime, window.slotDuration).filter((slot) => {
+    const start = toMinutes(slot.startTime);
+    const end = toMinutes(slot.endTime);
+    return !breaks.some((b) => start < b.end && b.start < end);
+  });
+};
+
+const slotStillOffered = (availability, appointment, next) =>
+  occursOn(next, appointment.date) &&
+  slotsForWindow(next).some((slot) => slot.startTime === appointment.startTime);
 
 // POST /api/availability  (doctor)
 const createAvailability = asyncHandler(async (req, res) => {
@@ -181,20 +230,13 @@ const updateAvailability = asyncHandler(async (req, res) => {
   };
   validateWindow(next);
 
-  if (!availability.isRecurring) {
-    const booked = await bookedInWindow(availability);
-    if (booked.length) {
-      if (next.date !== availability.date) {
-        throw new HttpError(409, 'Cannot move a window that has booked appointments; cancel them first');
-      }
-      const newStarts = generateSlots(next.startTime, next.endTime, next.slotDuration).map((s) => s.startTime);
-      if (booked.some((a) => !newStarts.includes(a.startTime))) {
-        throw new HttpError(409, 'Update would remove slots that already have booked appointments');
-      }
-    }
+  const booked = await bookedInWindow(availability);
+  const remainsActive = req.body.isActive === undefined ? availability.isActive : Boolean(req.body.isActive);
+  if (booked.some((appointment) => !remainsActive || !slotStillOffered(availability, appointment, next))) {
+    throw new HttpError(409, 'Update would remove slots that already have booked appointments');
   }
 
-  if (availability.isActive) await assertNoOverlap(availability.doctor, next, availability._id);
+  if (remainsActive) await assertNoOverlap(availability.doctor, next, availability._id);
 
   Object.assign(availability, next);
   if (req.body.isActive !== undefined) availability.isActive = Boolean(req.body.isActive);
@@ -205,7 +247,7 @@ const updateAvailability = asyncHandler(async (req, res) => {
 // DELETE /api/availability/:id  (doctor) - deactivates
 const removeAvailability = asyncHandler(async (req, res) => {
   const availability = await loadOwned(req);
-  if (!availability.isRecurring && (await bookedInWindow(availability)).length) {
+  if ((await bookedInWindow(availability)).length) {
     throw new HttpError(409, 'This window has booked appointments; cancel them before removing it');
   }
   availability.isActive = false;
@@ -240,7 +282,14 @@ const buildSlotView = async (doctorId, windows) => {
   const taken = new Set(booked.map((b) => `${b.date}|${b.startTime}`));
 
   return windows.map((w) => {
-    const slots = (typeof w.getSlots === 'function' ? w.getSlots() : []).map((s) => ({
+    const suppressRecurringOverlap = (s) => Boolean(w.isRecurring) && windows.some((specific) =>
+      !specific.isRecurring && specific.date === w.date &&
+      toMinutes(s.startTime) < toMinutes(specific.endTime) &&
+      toMinutes(specific.startTime) < toMinutes(s.endTime)
+    );
+    const slots = (typeof w.getSlots === 'function' ? w.getSlots() : [])
+      .filter((s) => !suppressRecurringOverlap(s))
+      .map((s) => ({
       ...s,
       date: w.date,
       availabilityId: w._id,
@@ -274,7 +323,7 @@ const getDoctorSlots = asyncHandler(async (req, res) => {
   const specificWindows = await Availability.find({
     doctor: doctor._id,
     date,
-    isRecurring: false,
+    isRecurring: { $ne: true },
     isActive: true,
   }).sort({ startTime: 1 });
 
@@ -301,14 +350,17 @@ const getDoctorSlots = asyncHandler(async (req, res) => {
   }).select('date startTime');
   const taken = new Set(booked.map((b) => `${b.date}|${b.startTime}`));
 
-  const slots = allWindows.flatMap((w) =>
-    w.getSlots().map((s) => ({
+  const slots = allWindows.flatMap((w) => w.getSlots()
+    .filter((s) => !w.isRecurring || !specificWindows.some((specific) =>
+      toMinutes(s.startTime) < toMinutes(specific.endTime) &&
+      toMinutes(specific.startTime) < toMinutes(s.endTime)
+    ))
+    .map((s) => ({
       ...s,
       date,
       availabilityId: w._id,
       available: !taken.has(`${date}|${s.startTime}`) && !isPastSlot(date, s.startTime),
-    }))
-  );
+    })));
 
   res.status(200).json({ success: true, message: 'Slots retrieved', data: slots });
 });
@@ -323,13 +375,14 @@ const getDoctorAvailability = asyncHandler(async (req, res) => {
   const toDate = req.query.to || addDays(from, 14);
   if (req.query.to) {
     if (!isValidDate(req.query.to)) throw new HttpError(400, 'Invalid to date');
-    range.$lte = req.query.to;
   }
+  if (toDate < from) throw new HttpError(400, 'to date cannot be before from date');
+  range.$lte = toDate;
 
   const specificWindows = await Availability.find({
     doctor: doctor._id,
     isActive: true,
-    isRecurring: false,
+    isRecurring: { $ne: true },
     date: range,
   }).sort({ date: 1, startTime: 1 });
 
@@ -350,14 +403,7 @@ const getDoctorAvailability = asyncHandler(async (req, res) => {
         if (rw.startDate && cur < rw.startDate) continue;
         if (rw.endDate && cur > rw.endDate) continue;
 
-        const overlapsSpecific = specificWindows.some(
-          (sw) =>
-            sw.date === cur &&
-            toMinutes(sw.startTime) < toMinutes(rw.endTime) &&
-            toMinutes(rw.startTime) < toMinutes(sw.endTime)
-        );
-        if (!overlapsSpecific) {
-          combinedWindows.push({
+        combinedWindows.push({
             _id: rw._id,
             doctor: rw.doctor,
             date: cur,
@@ -367,8 +413,7 @@ const getDoctorAvailability = asyncHandler(async (req, res) => {
             isRecurring: true,
             breaks: rw.breaks,
             getSlots: () => rw.getSlots(),
-          });
-        }
+        });
       }
     }
     cur = addDays(cur, 1);
