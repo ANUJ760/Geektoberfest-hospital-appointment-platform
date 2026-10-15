@@ -1,8 +1,11 @@
 const User = require('../models/User');
 const Doctor = require('../models/Doctor');
 const generateToken = require('../utils/generateToken');
+const sessionStore = require('../utils/sessionStore');
 const { isValidEmail } = require('../utils/validators');
 const { HttpError, asyncHandler } = require('../middlewares/errorHandler');
+const { recordAudit, AUDIT_ACTIONS } = require('../utils/audit');
+const { setAuthCookies } = require('../utils/tokenUtils');
 const { createDoctorAccount } = require('./doctorController');
 const { clearCache } = require('../config/redis');
 
@@ -27,17 +30,39 @@ const register = asyncHandler(async (req, res) => {
 
   let user;
   let doctor = null;
-  if (role === 'doctor') {
-    ({ user, doctor } = await createDoctorAccount({ ...req.body, name, email, password, phone }));
-    await clearCache('doctors:*');
-  } else {
-    user = await User.create({ name, email, password, role: 'patient', phone });
+  try {
+    if (role === 'doctor') {
+      ({ user, doctor } = await createDoctorAccount({ ...req.body, name, email, password, phone }));
+      await clearCache('doctors:*');
+    } else {
+      user = await User.create({ name, email, password, role: 'patient', phone });
+    }
+  } catch (err) {
+    if (err.code === 11000) throw new HttpError(409, 'Email is already registered');
+    throw err;
   }
+
+  // Registration signs the user in, so it establishes a session exactly like login does.
+  const { sessionId, refreshToken, csrfToken } = await sessionStore.createSession(user, req);
+  setAuthCookies(res, { refreshToken, csrfToken });
+
+  await recordAudit({
+    action: AUDIT_ACTIONS.REGISTER_SUCCESS,
+    outcome: 'success',
+    req,
+    actor: user._id,
+    actorRole: user.role,
+    targetUser: user._id,
+    targetType: 'user',
+    targetId: String(user._id),
+    sessionId,
+    description: `New ${user.role} account registered`,
+  });
 
   res.status(201).json({
     success: true,
     message: 'Registration successful',
-    data: { token: generateToken(user._id), user, doctor },
+    data: { token: generateToken(user._id, sessionId), user, doctor },
   });
 });
 
@@ -49,15 +74,39 @@ const login = asyncHandler(async (req, res) => {
   }
   const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
   if (!user || !(await user.comparePassword(password))) {
+    // The attempted email is deliberately not recorded (see issue-15-changes.md).
+    await recordAudit({
+      action: AUDIT_ACTIONS.LOGIN_FAILED,
+      outcome: 'failure',
+      req,
+      description: 'Login failed: invalid credentials',
+    });
     throw new HttpError(401, 'Invalid email or password');
   }
   if (!user.isActive) throw new HttpError(403, 'Account is deactivated');
+
+  // Every successful login starts its own session/device record.
+  const { sessionId, refreshToken, csrfToken } = await sessionStore.createSession(user, req);
+  setAuthCookies(res, { refreshToken, csrfToken });
+
+  await recordAudit({
+    action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+    outcome: 'success',
+    req,
+    actor: user._id,
+    actorRole: user.role,
+    targetUser: user._id,
+    targetType: 'user',
+    targetId: String(user._id),
+    sessionId,
+    description: `Login succeeded for role ${user.role}`,
+  });
 
   const doctor = user.role === 'doctor' ? await Doctor.findOne({ user: user._id }).populate(doctorPopulate) : null;
   res.status(200).json({
     success: true,
     message: 'Login successful',
-    data: { token: generateToken(user._id), user, doctor },
+    data: { token: generateToken(user._id, sessionId), user, doctor },
   });
 });
 

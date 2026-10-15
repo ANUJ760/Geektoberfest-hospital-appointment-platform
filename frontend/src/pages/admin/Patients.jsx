@@ -6,7 +6,8 @@ import PageHeader from '../../components/common/PageHeader';
 import Spinner from '../../components/common/Spinner';
 import StatusBadge from '../../components/common/StatusBadge';
 import useFetch from '../../hooks/useFetch';
-import { getErrorMessage } from '../../utils/format';
+import { generateCSV, downloadCSV } from '../../utils/csv';
+import { getErrorMessage, todayString } from '../../utils/format';
 
 export default function Patients() {
   const [search, setSearch] = useState('');
@@ -29,6 +30,21 @@ export default function Patients() {
     }
   };
 
+  const handleExportCSV = () => {
+    if (!data || !data.length) return;
+    const headers = [
+      { label: 'Patient ID', key: '_id' },
+      { label: 'Name', key: 'name' },
+      { label: 'Email', key: 'email' },
+      { label: 'Phone', key: (p) => p.phone || '' },
+      { label: 'Status', key: (p) => (p.isActive ? 'Active' : 'Inactive') },
+      { label: 'Role', key: 'role' },
+      { label: 'Joined', key: (p) => (p.createdAt ? new Date(p.createdAt).toISOString() : '') },
+    ];
+    const csv = generateCSV(headers, data);
+    downloadCSV(`patients_${todayString()}.csv`, csv);
+  };
+
   const columns = [
     { header: 'Name', render: (p) => <span className="font-medium">{p.name}</span> },
     { header: 'Email', render: (p) => p.email },
@@ -40,7 +56,20 @@ export default function Patients() {
 
   return (
     <div>
-      <PageHeader title="Patients" />
+      <PageHeader
+        title="Patients"
+        actions={
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleExportCSV}
+            disabled={!data || data.length === 0}
+            id="export-patients-csv"
+          >
+            Export to CSV
+          </button>
+        }
+      />
       <div className="mb-4 max-w-sm">
         <label htmlFor="patient-search" className="label">Search</label>
         <input id="patient-search" className="input" placeholder="Name or email" value={search} onChange={(e) => setSearch(e.target.value)} />
